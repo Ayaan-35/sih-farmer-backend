@@ -1,0 +1,16 @@
+date,mandi_name,district,crop,modal_price,latitude,longitude
+2026-08-25,APMC Pune,Pune,Tomato,2400,18.5204,73.8567
+2026-08-28,APMC Pune,Pune,Tomato,2550,18.5204,73.8567
+2026-08-30,APMC Pune,Pune,Tomato,2600,18.5204,73.8567
+2026-09-01,APMC Pune,Pune,Tomato,2700,18.5204,73.8567
+2026-09-01,APMC Baramati,Pune,Tomato,2450,18.1517,74.5770
+2026-09-01,APMC Shirur,Pune,Tomato,2500,18.8272,74.3773
+2026-09-01,APMC Satara,Satara,Tomato,2300,17.6805,73.9997
+2026-09-01,APMC Nashik,Nashik,Tomato,2100,19.9975,73.7898
+2026-08-27,APMC Nashik,Nashik,Onion,1800,19.9975,73.7898
+2026-08-30,APMC Nashik,Nashik,Onion,1850,19.9975,73.7898
+2026-09-01,APMC Lasalgaon,Nashik,Onion,1950,20.1478,74.2259
+2026-09-01,APMC Pune,Pune,Onion,2050,18.5204,73.8567
+2026-09-01,APMC Nagpur,Nagpur,Cotton,6200,21.1458,79.0882
+2026-09-01,APMC Amravati,Amravati,Cotton,6150,20.9374,77.7796
+2026-09-01,APMC Jalgaon,Jalgaon,Banana,1400,21.0077,75.5626

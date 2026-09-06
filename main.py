@@ -16,8 +16,9 @@
 # ─────────────────────────────────────────────────────────────
 
 import logging                                      # For server-side error logging
+import os                                            # For path resolution
 
-from fastapi import FastAPI, HTTPException, Request  # Web framework & error handling
+from fastapi import FastAPI, HTTPException, Query, Request  # Web framework & error handling
 from fastapi.middleware.cors import CORSMiddleware   # Cross-Origin Resource Sharing
 from fastapi.responses import JSONResponse           # For custom error responses
 from pydantic import BaseModel, Field                # Request/Response validation
@@ -26,6 +27,9 @@ from typing import Optional                          # Optional type hints
 # Import the shared Supabase client from our database module.
 # This will load .env and validate credentials on startup.
 from database import supabase
+
+# Import the CSV-backed Mandi service for nearby-mandi & price-trend features.
+from mandi_service import MandiService
 
 # Configure a logger so errors are recorded in server logs,
 # not swallowed silently.  Judges love to see proper logging.
@@ -577,6 +581,52 @@ def _build_advisory(results: list[MandiResultItem], quantity_kg: float) -> str:
         )
 
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────
+# 7b. CSV-BACKED MANDI SERVICE — Nearby Mandis & Price Trends
+# ─────────────────────────────────────────────────────────────
+# These two endpoints use mandi_data.csv via MandiService.
+
+_CSV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mandi_data.csv")
+_mandi_svc = MandiService(_CSV_PATH)
+
+
+@app.get(
+    "/api/nearby-mandis",
+    summary="Find Nearby Mandis",
+    tags=["Mandi Discovery"],
+)
+def nearby_mandis(
+    lat: float = Query(..., description="Farmer's latitude"),
+    lon: float = Query(..., description="Farmer's longitude"),
+    top_k: int = Query(3, ge=1, le=20, description="Number of nearest mandis to return"),
+):
+    """
+    Returns the `top_k` nearest APMC mandis to the farmer's GPS coordinates,
+    ranked by haversine distance.
+    """
+    results = _mandi_svc.get_nearby_mandis(lat, lon, top_k)
+    return {"farmer_location": {"lat": lat, "lon": lon}, "top_k": top_k, "nearby_mandis": results}
+
+
+@app.get(
+    "/api/mandi-prices",
+    summary="Get Mandi Price Trends",
+    tags=["Mandi Discovery"],
+)
+def mandi_prices(
+    crop: str = Query(..., min_length=2, description="Crop name (e.g. Tomato)"),
+    district: str = Query(..., min_length=2, description="District name (e.g. Pune)"),
+):
+    """
+    Returns the latest modal price, 7-day average, and trend status
+    for a given crop in a given district.
+    """
+    result = _mandi_svc.get_price_trends(crop, district)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 # ─────────────────────────────────────────────────────────────
