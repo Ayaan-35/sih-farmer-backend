@@ -1,279 +1,234 @@
-# 🏛️ SIH 2026 — Smart Market Discovery & Price Intelligence Backend
+# SIH26132 — Market Discovery & Price Intelligence Backend
 
-![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)
-![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)
-![NumPy](https://img.shields.io/badge/NumPy-Vectorized-013243?logo=numpy&logoColor=white)
-![Pandas](https://img.shields.io/badge/Pandas-Analytics-150458?logo=pandas&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.1%2B-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?logo=supabase&logoColor=white)](https://supabase.com/)
+[![NumPy](https://img.shields.io/badge/NumPy-Vectorized%20math-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![Pandas](https://img.shields.io/badge/Pandas-Data%20analysis-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+![License](https://img.shields.io/badge/License-Not%20specified-lightgrey)
 
-> **Problem Statement SIH26132** — A production-ready backend that helps Maharashtra farmers discover the most profitable APMC Mandi for selling their crops, powered by real-time database queries, geospatial analytics, and price trend intelligence.
+**Market Discovery & Price Intelligence Engine** is the backend for Smart India Hackathon 2026 problem statement **SIH26132**. It helps farmers identify viable APMC markets by combining GPS-based mandi discovery, historical modal-price momentum, and a net-realization calculation that accounts for transport costs.
 
----
+Instead of recommending the mandi with only the highest listed price, the engine ranks options by expected net profit. This supports more practical decisions: where to sell, whether a farther market is worthwhile, and whether current price movement is upward or downward.
 
-## 📋 Table of Contents
+## Core Features
 
-- [Architecture Overview](#-architecture-overview)
-- [Tech Stack](#-tech-stack)
-- [API Endpoints](#-api-endpoints)
-- [Project Structure](#-project-structure)
-- [Local Setup](#-local-setup)
-- [Testing](#-testing)
-- [Environment Variables](#-environment-variables)
+### Geospatial nearest-mandi discovery
 
----
+`MandiService.get_nearby_mandis()` uses the vectorized `haversine_np()` implementation to calculate great-circle distances from a farmer's latitude and longitude to APMC GPS coordinates in `mandi_data.csv`. It groups market locations, sorts them by `distance_km`, and returns the nearest requested number of mandis.
 
-## 🏗️ Architecture Overview
+### Seven-day rolling price trend engine
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      FastAPI Application                        │
-│                        (main.py)                                │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│  Cloud Database  │  Geolocation &   │   Recommendation          │
-│  Layer           │  Analytics       │   Engine                  │
-│                  │  Service         │                           │
-│  • Supabase      │                  │  • Net realisation calc   │
-│    PostgreSQL    │  • Haversine GPS │  • Revenue − Transport    │
-│  • Real-time     │    proximity     │  • Distance-based cost    │
-│    crop/mandi    │  • 7-day price   │  • Smart advisory         │
-│    listings      │    trend window  │    generation             │
-│  • PostgREST     │  • Offline CSV   │  • Viability flagging     │
-│    joins         │    dataset       │                           │
-├──────────────────┼──────────────────┼───────────────────────────┤
-│  database.py     │ mandi_service.py │  main.py (POST /recommend)│
-│                  │ mandi_data.csv   │                           │
-└──────────────────┴──────────────────┴───────────────────────────┘
+`MandiService.get_price_trends()` filters historical records by crop and district, identifies the newest modal price, and compares it with the average modal price in the preceding seven-day window. The response reports an `Upward` trend when the current price is greater than or equal to the rolling average; otherwise it reports `Downward`.
+
+### Net realization optimizer
+
+`POST /api/recommend` evaluates eligible mandi listings for a crop and calculates:
+
+```text
+gross_earnings = quantity_kg × modal_price_per_kg
+transport_cost = distance_km × ₹4
+net_profit     = gross_earnings − transport_cost
 ```
 
-### 1. Cloud Database Layer — `database.py`
+The endpoint returns every eligible option sorted by net profit, marks loss-making routes with `is_viable: false`, and provides a plain-language advisory. The transport rate is currently a fixed one-way estimate of **₹4 per kilometre**.
 
-- Connects to **Supabase PostgreSQL** via the official Python SDK.
-- Credentials loaded from `.env` using `python-dotenv`.
-- Exposes a shared `supabase` client imported by the application layer.
-- Tables: `crops`, `mandis`, `mandi_prices` (with foreign key joins).
+### Cloud data layer with fallback
 
-### 2. Geolocation & Analytics Service — `mandi_service.py`
+The application reads crop and mandi-price data from Supabase PostgreSQL through the Supabase client. If a database query fails or returns no records, the relevant listing endpoints and recommendation flow use the built-in in-memory fallback dataset, preserving a dependable demo path.
 
-| Feature | Detail |
-|---------|--------|
-| **Nearest Mandi Discovery** | Haversine formula with **NumPy vectorization** computes great-circle distances from the farmer's GPS coordinates to all APMC mandis in the dataset. |
-| **Price Trend Analysis** | 7-day rolling window on `modal_price` per quintal. Computes current price, 7-day average, and classifies momentum as **Upward** or **Downward**. |
-| **Offline Dataset** | `mandi_data.csv` — 15 APMC mandi records across 5 districts, 4 crops (Tomato, Onion, Cotton, Banana) with geo-coordinates and time-series prices. |
+## Architecture
 
-### 3. Recommendation Engine — `main.py`
-
-- Computes **net realization** = `(Quantity × Price/kg) − (Distance × ₹4/km transport)`.
-- Ranks all mandis within the farmer's travel radius by net profit.
-- Flags loss-making routes (`is_viable = false`) where transport exceeds revenue.
-- Generates a human-readable **Smart Advisory** paragraph explaining the recommendation.
-- Falls back gracefully from Supabase → in-memory mock data if the DB is unreachable.
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **Web Framework** | FastAPI | Async REST API with auto-generated OpenAPI docs |
-| **ASGI Server** | Uvicorn | High-performance async server |
-| **Validation** | Pydantic | Request/response schema enforcement |
-| **Database** | Supabase (PostgreSQL) | Cloud-hosted relational data with PostgREST |
-| **Geospatial** | NumPy | Vectorized haversine distance computation |
-| **Analytics** | Pandas | Time-series price trend analysis |
-| **Config** | python-dotenv | Secure credential management via `.env` |
-| **Testing** | httpx + TestClient | FastAPI endpoint integration testing |
-
----
-
-## 📡 API Endpoints
-
-| Method | Endpoint | Description | Auth |
-|--------|----------|-------------|------|
-| `GET` | `/` | Health check — service status | None |
-| `GET` | `/api/crops` | List all available crops | None |
-| `GET` | `/api/mandis` | List all Supabase mandi records | None |
-| `POST` | `/api/recommend` | Compute the most profitable mandi for a crop + quantity | None |
-| `GET` | `/api/nearby-mandis?lat={lat}&lon={lon}&top_k={k}` | Geospatial nearest mandi discovery (haversine) | None |
-| `GET` | `/api/mandi-prices?crop={crop}&district={district}` | Price trends — latest price, 7-day avg, momentum | None |
-| `GET` | `/docs` | Interactive Swagger UI documentation | None |
-| `GET` | `/redoc` | ReDoc API documentation | None |
-
-### Example Requests
-
-#### 🔍 Find Nearest Mandis
-
-```bash
-curl "http://127.0.0.1:8000/api/nearby-mandis?lat=18.5204&lon=73.8567&top_k=3"
+```text
+Client / Frontend
+        │
+        ▼
+FastAPI routes + Pydantic validation
+        ├──────────────► Supabase PostgreSQL (live crop and mandi data)
+        │                         │
+        │                         └── failure / empty-result fallback
+        ▼
+MandiService ─────────► mandi_data.csv (GPS and historical modal prices)
+        │
+        ├── NumPy Haversine distance calculations
+        └── Pandas seven-day price analysis
 ```
+
+## API Contract
+
+Interactive OpenAPI documentation is available at [`/docs`](http://127.0.0.1:8000/docs) while the service is running.
+
+| Method | Endpoint | Query / body payload | Response summary |
+| --- | --- | --- | --- |
+| `GET` | `/` | None | Service status, project identifier, and database label. |
+| `GET` | `/api/crops` | None | Available crop names from Supabase or fallback data. |
+| `GET` | `/api/mandis` | None | All mandi-price listings, source (`database` or `fallback`), and total count. |
+| `POST` | `/api/recommend` | JSON: `crop_name` (2+ chars), `quantity_kg` (>0, ≤100000), optional `max_distance_km` (>0, ≤2000; default 200). | Best mandi, net profit, ranked options, viability flags, and advisory. Returns `404` for an untracked crop and `400` when no market meets the distance limit. |
+| `GET` | `/api/nearby-mandis` | `lat` (float), `lon` (float), optional `top_k` (integer 1–20; default 3). | Farmer coordinates plus nearest mandi records with GPS coordinates and `distance_km`. |
+| `GET` | `/api/mandi-prices` | `crop` (2+ chars), `district` (2+ chars). | Latest modal price, seven-day average, latest record date, and `Upward` / `Downward` trend. Returns `404` if no matching historical record exists. |
+| `GET` | `/docs` | None | Swagger UI generated from the FastAPI OpenAPI schema. |
+
+### Recommendation request example
+
+```json
+{
+  "crop_name": "Tomato",
+  "quantity_kg": 500,
+  "max_distance_km": 200
+}
+```
+
+### Validation and errors
+
+- FastAPI/Pydantic returns `422 Unprocessable Entity` when route or request-body constraints are invalid, such as missing coordinates, `top_k` outside 1–20, or a non-positive quantity.
+- `GET /api/mandi-prices` returns `404 Not Found` when the requested crop/district pair has no CSV history.
+- `POST /api/recommend` returns `404 Not Found` for an untracked crop and `400 Bad Request` when the crop exists but no mandi is within the requested distance.
+
+## Sample Responses
+
+### `GET /api/nearby-mandis?lat=18.5204&lon=73.8567&top_k=3`
 
 ```json
 {
   "farmer_location": { "lat": 18.5204, "lon": 73.8567 },
   "top_k": 3,
   "nearby_mandis": [
-    { "mandi_name": "APMC Pune", "district": "pune", "distance_km": 0.0 },
-    { "mandi_name": "APMC Shirur", "district": "pune", "distance_km": 64.59 },
-    { "mandi_name": "APMC Baramati", "district": "pune", "distance_km": 86.38 }
+    { "mandi_name": "APMC Pune", "district": "pune", "latitude": 18.5204, "longitude": 73.8567, "distance_km": 0.0 },
+    { "mandi_name": "APMC Shirur", "district": "pune", "latitude": 18.8272, "longitude": 74.3773, "distance_km": 64.59 },
+    { "mandi_name": "APMC Baramati", "district": "pune", "latitude": 18.1517, "longitude": 74.577, "distance_km": 86.38 }
   ]
 }
 ```
 
-#### 📈 Get Price Trends
-
-```bash
-curl "http://127.0.0.1:8000/api/mandi-prices?crop=Tomato&district=Pune"
-```
+### `GET /api/mandi-prices?crop=Tomato&district=Pune`
 
 ```json
 {
   "crop": "Tomato",
   "district": "Pune",
   "latest_date": "2026-09-01",
-  "current_modal_price_per_quintal": 2500.0,
-  "7_day_average_price": 2533.33,
-  "trend_status": "Downward"
+  "current_modal_price_per_quintal": 2700.0,
+  "7_day_average_price": 2562.5,
+  "trend_status": "Upward"
 }
 ```
 
-#### 🚀 Get Best Mandi Recommendation
+> Sample values are representative of the CSV-backed API response; the exact result follows the records currently present in `mandi_data.csv`.
 
-```bash
-curl -X POST "http://127.0.0.1:8000/api/recommend" \
-  -H "Content-Type: application/json" \
-  -d '{"crop_name": "Tomato", "quantity_kg": 500, "max_distance_km": 200}'
-```
+## Repository Structure
 
----
-
-## 📁 Project Structure
-
-```
+```text
 sih-farmer-backend/
-├── main.py                   # FastAPI app — endpoints, recommendation engine
-├── database.py               # Supabase client initialization
-├── mandi_service.py          # Geolocation + price analytics service
-├── mandi_data.csv            # Offline APMC mandi dataset (15 records)
-├── test_mandi_features.py    # Automated integration test suite
+├── database.py               # Supabase client initialization and configuration
+├── main.py                   # FastAPI app, routes, schemas, fallback data, optimizer
+├── mandi_service.py          # Haversine and CSV-backed mandi/price service
+├── mandi_data.csv            # Historical APMC coordinates and modal-price records
+├── test_mandi_features.py    # Service and FastAPI endpoint integration tests
 ├── requirements.txt          # Python dependencies
-├── .env                      # Supabase credentials (not committed)
-├── .gitignore                # Git ignore rules
-└── README.md                 # This file
+├── .env                      # Local environment variables (do not commit secrets)
+└── README.md                 # Project documentation
 ```
 
----
+## Prerequisites
 
-## 🚀 Local Setup
+- Python 3.12 or newer
+- A Supabase project for live crop and mandi data (optional for local fallback mode)
+- Git
 
-### Prerequisites
-
-- Python 3.10 or higher
-- pip (Python package manager)
-
-### 1. Clone the repository
+## Installation and Local Run
 
 ```bash
 git clone https://github.com/Ayaan-35/sih-farmer-backend.git
 cd sih-farmer-backend
+python -m venv .venv
 ```
 
-### 2. Install dependencies
+Activate the virtual environment:
+
+```bash
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+# macOS / Linux
+source .venv/bin/activate
+```
+
+Install dependencies and configure local environment variables:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment
-
-Create a `.env` file in the project root (or update the existing one):
+Create a `.env` file in the repository root:
 
 ```env
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_KEY=your-anon-key-here
+SUPABASE_KEY=your-supabase-anon-or-service-key
 ```
 
-### 4. Start the development server
+`SUPABASE_URL` and `SUPABASE_KEY` are required for live Supabase reads. Do not commit `.env` files or production credentials. The current code can serve fallback mandi data when live data is unavailable.
+
+Start the API:
 
 ```bash
 uvicorn main:app --reload
 ```
 
-The API will be available at:
-- **Base URL:** `http://127.0.0.1:8000`
-- **Swagger Docs:** `http://127.0.0.1:8000/docs`
-- **ReDoc:** `http://127.0.0.1:8000/redoc`
+The API is then available at `http://127.0.0.1:8000`, with interactive documentation at `http://127.0.0.1:8000/docs`.
 
----
+## Automated Testing
 
-## 🧪 Testing
-
-### Automated Test Suite
-
-Run all 11 integration tests (service-layer + HTTP endpoint verification):
+The test script checks the CSV-backed `MandiService` and the FastAPI endpoints through `TestClient`.
 
 ```bash
 python test_mandi_features.py
 ```
 
-**Expected output:**
+It verifies nearby-mandi ranking, price-trend response fields, and successful responses from `/api/nearby-mandis` and `/api/mandi-prices`.
 
-```
-════════════════════════════════════════════════════════════
-  TEST 1: Direct MandiService Unit Tests
-════════════════════════════════════════════════════════════
+## Deploying to Render
 
-  ✅ Returns exactly 3 mandis
-  ✅ Nearest mandi is APMC Pune with distance 0.0 km
-  ✅ latest_date is returned
-  ✅ current_modal_price_per_quintal is returned
-  ✅ 7_day_average_price is returned
-  ✅ trend_status is returned
+1. Push this repository to GitHub and create a Supabase project/table setup used by the backend.
+2. In [Render](https://render.com/), select **New +** → **Web Service** and connect the GitHub repository.
+3. Choose a Python runtime, then set the build command:
 
-════════════════════════════════════════════════════════════
-  TEST 2: FastAPI Endpoint Tests (TestClient)
-════════════════════════════════════════════════════════════
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-  ✅ Status code is 200
-  ✅ Response contains 'nearby_mandis' list
-  ✅ Nearby Mandis endpoint returns 3 results
-  ✅ Status code is 200
-  ✅ Response contains price trend fields
+4. Set the start command:
 
-════════════════════════════════════════════════════════════
-  🎉 ALL 11 TESTS PASSED
-════════════════════════════════════════════════════════════
-```
+   ```bash
+   uvicorn main:app --host 0.0.0.0 --port $PORT
+   ```
 
-### Manual Testing
+5. Add these environment variables in Render's service settings:
 
-Start the server and open these URLs in your browser:
+   | Variable | Purpose |
+   | --- | --- |
+   | `SUPABASE_URL` | Supabase project URL used by the database client. |
+   | `SUPABASE_KEY` | Supabase API key authorized for the required read operations. |
 
-| Test | URL |
-|------|-----|
-| Nearby Mandis (Pune) | `http://127.0.0.1:8000/api/nearby-mandis?lat=18.5204&lon=73.8567&top_k=3` |
-| Price Trend (Tomato/Pune) | `http://127.0.0.1:8000/api/mandi-prices?crop=Tomato&district=Pune` |
-| Price Trend (Onion/Nashik) | `http://127.0.0.1:8000/api/mandi-prices?crop=Onion&district=Nashik` |
-| Swagger Docs | `http://127.0.0.1:8000/docs` |
+6. Deploy the service, open its generated URL followed by `/docs`, and exercise the health check plus core endpoints.
 
----
+For a secure production deployment, keep credentials exclusively in Render environment settings, limit the Supabase key to the least privilege required, and configure the application's CORS allowlist for the deployed frontend origin before public release.
 
-## 🔐 Environment Variables
+## Technology Stack
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SUPABASE_URL` | ✅ | Your Supabase project URL |
-| `SUPABASE_KEY` | ✅ | Your Supabase anon/public API key |
+- **FastAPI + Uvicorn** — API framework and ASGI server
+- **Pydantic** — request validation and response contracts
+- **Supabase PostgreSQL** — live market and crop data
+- **NumPy** — vectorized Haversine distance calculations
+- **Pandas** — CSV loading and rolling historical price analysis
+- **python-dotenv** — local environment-variable loading
 
-> ⚠️ **Never commit `.env` to version control.** It is already listed in `.gitignore`.
+## SIH Demo Flow
+
+1. Call `/api/nearby-mandis` with a farmer's GPS location to show nearby APMCs.
+2. Call `/api/mandi-prices` for a crop and district to explain recent price momentum.
+3. Submit the farmer's crop, quantity, and travel limit to `/api/recommend`.
+4. Show that the selected mandi maximizes net realization after transport—not merely the posted price.
 
 ---
 
-## 📄 License
-
-This project is developed as part of **Smart India Hackathon 2026** (Problem Statement SIH26132).
-
----
-
-<p align="center">
-  Built with ❤️ for Indian Farmers
-</p>
+Built for **Smart India Hackathon 2026** — SIH26132.
