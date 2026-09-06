@@ -30,6 +30,12 @@ from database import supabase
 
 # Import the CSV-backed Mandi service for nearby-mandi & price-trend features.
 from mandi_service import MandiService
+from payment_service import (
+    EscrowOrderNotFoundError,
+    InvalidHandoverOtpError,
+    PaymentService,
+    PayoutAlreadyReleasedError,
+)
 
 # Configure a logger so errors are recorded in server logs,
 # not swallowed silently.  Judges love to see proper logging.
@@ -59,6 +65,10 @@ app.add_middleware(
     allow_methods=["*"],       # Accept every HTTP method (GET, POST, …)
     allow_headers=["*"],       # Accept every header
 )
+
+# Prototype-only ledger. A production version would persist this state in a
+# transactional database and call a regulated payment provider asynchronously.
+payment_service = PaymentService()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -152,18 +162,35 @@ class RecommendationRequest(BaseModel):
     )
     quantity_kg: float = Field(
         ...,
-        gt=0,                   # Must be positive
-        le=100000,              # Cap at 1,00,000 kg to prevent absurd inputs
+        gt=0,
+        le=100000,
         example=500,
         description="Quantity must be between 0 and 1,00,000 kg.",
     )
     max_distance_km: Optional[float] = Field(
         default=200.0,
-        gt=0,                   # Must be positive (0 km makes no sense)
-        le=2000,                # Cap at 2000 km — realistic Indian distances
+        gt=0,
+        le=2000,
         example=200.0,
         description="Distance must be positive and realistic (max 2000 km).",
     )
+
+
+class CreateEscrowRequest(BaseModel):
+    """Payload for a buyer-funded Kisan Suraksha escrow order."""
+
+    farmer_id: str = Field(..., min_length=1, max_length=100, strip_whitespace=True)
+    buyer_id: str = Field(..., min_length=1, max_length=100, strip_whitespace=True)
+    crop: str = Field(..., min_length=2, max_length=100, strip_whitespace=True)
+    quantity_kg: float = Field(..., gt=0, le=100000)
+    total_amount: float = Field(..., gt=0, le=100000000)
+
+
+class ReleasePayoutRequest(BaseModel):
+    """Payload submitted after physical inspection at the destination."""
+
+    order_id: str = Field(..., min_length=8, max_length=100, strip_whitespace=True)
+    entered_otp: str = Field(..., pattern=r"^\d{4}$")
 
 
 class MandiResultItem(BaseModel):
@@ -343,6 +370,45 @@ def root():
         "project": "SIH26132 Market Discovery Engine",
         "database": "Supabase PostgreSQL",
     }
+
+
+# ---------- 6aa. Kisan Suraksha Escrow ----------
+
+@app.post(
+    "/api/payment/create-order",
+    status_code=201,
+    summary="Lock Buyer Funds in Kisan Suraksha Escrow",
+    tags=["Kisan Suraksha Payments"],
+)
+def create_escrow_order(request: CreateEscrowRequest):
+    """Create a buyer-funded hold and issue the farmer's handover OTP."""
+    return payment_service.create_escrow_order(
+        farmer_id=request.farmer_id,
+        buyer_id=request.buyer_id,
+        crop=request.crop,
+        quantity_kg=request.quantity_kg,
+        total_amount=request.total_amount,
+    )
+
+
+@app.post(
+    "/api/payment/release-payout",
+    summary="Verify Handover OTP and Release Farmer Payout",
+    tags=["Kisan Suraksha Payments"],
+)
+def release_payout(request: ReleasePayoutRequest):
+    """Release the simulated instant settlement after physical handover."""
+    try:
+        return payment_service.verify_and_release_payout(
+            order_id=request.order_id,
+            entered_otp=request.entered_otp,
+        )
+    except EscrowOrderNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PayoutAlreadyReleasedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidHandoverOtpError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------- 6b. List available crops ----------
