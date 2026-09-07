@@ -696,7 +696,33 @@ def mandi_prices(
 
 
 # ─────────────────────────────────────────────────────────────
-# 8. ENTRY POINT (optional — for running with `python main.py`)
+# 7. AI BUYER & ADVISORY ROUTES
+# ─────────────────────────────────────────────────────────────
+
+from ai_buyer_service import filter_buyers, ask_gemini_advisory
+
+class AdvisoryRequest(BaseModel):
+    user_message: str
+    crop: str
+    district: str
+
+@app.get("/api/buyer-matches")
+def api_buyer_matches(crop: str, quantity: float, district: str):
+    """Matches verified buyers matching crop, capacity, and district"""
+    return filter_buyers(crop=crop, quantity=quantity, district=district)
+
+@app.post("/api/advisory-bot")
+def api_advisory_bot(req: AdvisoryRequest):
+    """Provides bilingual AI advisory based on market price trend"""
+    market_context = _mandi_svc.get_price_trends(req.crop, req.district)
+    advice = ask_gemini_advisory(user_prompt=req.user_message, market_data=market_context)
+    return {
+        "advice": advice,
+        "market_context": market_context
+    }
+
+# ─────────────────────────────────────────────────────────────
+# 8. ENTRY POINT (Keep this strictly at the very bottom)
 # ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

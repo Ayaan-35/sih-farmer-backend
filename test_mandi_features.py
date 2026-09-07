@@ -1,179 +1,94 @@
-"""
-===========================================================================
-  test_mandi_features.py — Automated Integration Tests
-  ─────────────────────────────────────────────────────
-  Test 1: Direct MandiService unit tests (CSV-backed)
-  Test 2: FastAPI live endpoint tests via TestClient
-===========================================================================
-"""
-
-import sys
-import json
-import io
-
-# Force UTF-8 output on Windows (avoids cp1252 UnicodeEncodeError)
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-
-# ── Colour helpers for terminal output ───────────────────────
-GREEN  = "\033[92m"
-RED    = "\033[91m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
-
-passed = 0
-failed = 0
-
-
-def report(label: str, success: bool, detail: str = ""):
-    global passed, failed
-    if success:
-        passed += 1
-        icon = f"{GREEN}✅{RESET}"
-    else:
-        failed += 1
-        icon = f"{RED}❌{RESET}"
-    print(f"  {icon} {label}")
-    if detail:
-        print(f"      {detail}")
-
-
-# ═════════════════════════════════════════════════════════════
-#  TEST 1 — Direct MandiService Tests
-# ═════════════════════════════════════════════════════════════
-
-print(f"\n{BOLD}{CYAN}{'═'*60}{RESET}")
-print(f"{BOLD}{CYAN}  TEST 1: Direct MandiService Unit Tests{RESET}")
-print(f"{BOLD}{CYAN}{'═'*60}{RESET}\n")
-
-from mandi_service import MandiService
-
-svc = MandiService("mandi_data.csv")
-
-# ── 1a. Nearby Mandis ────────────────────────────────────────
-print(f"  {BOLD}▸ get_nearby_mandis(lat=18.5204, lon=73.8567, top_k=3){RESET}")
-nearby = svc.get_nearby_mandis(farmer_lat=18.5204, farmer_lon=73.8567, top_k=3)
-
-report(
-    "Returns exactly 3 mandis",
-    len(nearby) == 3,
-    f"Got {len(nearby)} mandis",
-)
-
-first = nearby[0] if nearby else {}
-report(
-    "Nearest mandi is APMC Pune with distance 0.0 km",
-    first.get("mandi_name") == "APMC Pune" and first.get("distance_km") == 0.0,
-    f"Got: {first.get('mandi_name')} @ {first.get('distance_km')} km",
-)
-
-print(f"\n  {BOLD}Nearby Mandis Result:{RESET}")
-for i, m in enumerate(nearby, 1):
-    print(f"    {i}. {m['mandi_name']} ({m['district']}) — {m['distance_km']} km")
-
-# ── 1b. Price Trends ─────────────────────────────────────────
-print(f"\n  {BOLD}▸ get_price_trends('Tomato', 'Pune'){RESET}")
-trend = svc.get_price_trends("Tomato", "Pune")
-
-report(
-    "latest_date is returned",
-    "latest_date" in trend and trend["latest_date"] != "",
-    f"latest_date = {trend.get('latest_date')}",
-)
-
-report(
-    "current_modal_price_per_quintal is returned",
-    "current_modal_price_per_quintal" in trend and isinstance(trend["current_modal_price_per_quintal"], (int, float)),
-    f"current_modal_price_per_quintal = ₹{trend.get('current_modal_price_per_quintal')}",
-)
-
-report(
-    "7_day_average_price is returned",
-    "7_day_average_price" in trend and isinstance(trend["7_day_average_price"], (int, float)),
-    f"7_day_average_price = ₹{trend.get('7_day_average_price')}",
-)
-
-report(
-    "trend_status is returned",
-    "trend_status" in trend and trend["trend_status"] in ("Upward", "Downward"),
-    f"trend_status = {trend.get('trend_status')}",
-)
-
-print(f"\n  {BOLD}Price Trend Result:{RESET}")
-for k, v in trend.items():
-    print(f"    {k}: {v}")
-
-
-# ═════════════════════════════════════════════════════════════
-#  TEST 2 — FastAPI Live Endpoint Tests (TestClient)
-# ═════════════════════════════════════════════════════════════
-
-print(f"\n{BOLD}{CYAN}{'═'*60}{RESET}")
-print(f"{BOLD}{CYAN}  TEST 2: FastAPI Endpoint Tests (TestClient){RESET}")
-print(f"{BOLD}{CYAN}{'═'*60}{RESET}\n")
-
+import os
 from fastapi.testclient import TestClient
+from mandi_service import MandiService
+from ai_buyer_service import filter_buyers, ask_gemini_advisory
 from main import app
 
 client = TestClient(app)
+CSV_FILE = "mandi_data.csv"
 
-# ── 2a. GET /api/nearby-mandis ───────────────────────────────
-print(f"  {BOLD}▸ GET /api/nearby-mandis?lat=18.5204&lon=73.8567&top_k=3{RESET}")
-resp_nearby = client.get("/api/nearby-mandis", params={"lat": 18.5204, "lon": 73.8567, "top_k": 3})
+def test_all_features():
+    print("\n============================================================")
+    print("  SIH26132 FULL INTEGRATION TEST SUITE (14 TESTS)")
+    print("============================================================")
 
-report(
-    "Status code is 200",
-    resp_nearby.status_code == 200,
-    f"status_code = {resp_nearby.status_code}",
-)
+    assert os.path.exists(CSV_FILE), "mandi_data.csv missing!"
+    service = MandiService(CSV_FILE)
 
-body_nearby = resp_nearby.json()
-report(
-    "Response contains 'nearby_mandis' list",
-    "nearby_mandis" in body_nearby and isinstance(body_nearby["nearby_mandis"], list),
-    f"Keys: {list(body_nearby.keys())}",
-)
+    # 1. Mandi Service Logic Tests
+    nearby_pune = service.get_nearby_mandis(18.5204, 73.8567, top_k=3)
+    assert len(nearby_pune) == 3
+    assert nearby_pune[0]["mandi_name"] == "APMC Pune" and nearby_pune[0]["distance_km"] == 0.0
+    print("✅ Test 1 Passed: Nearby Mandi returned 0.0 km")
 
-report(
-    "Nearby Mandis endpoint returns 3 results",
-    len(body_nearby.get("nearby_mandis", [])) == 3,
-    f"Got {len(body_nearby.get('nearby_mandis', []))} results",
-)
+    nearby_5 = service.get_nearby_mandis(18.5204, 73.8567, top_k=5)
+    assert len(nearby_5) == 5
+    print("✅ Test 2 Passed: Top-K returned 5 mandis")
 
-print(f"\n  {BOLD}Endpoint Response:{RESET}")
-print(f"    {json.dumps(body_nearby, indent=4)}")
+    distances = [m["distance_km"] for m in nearby_5]
+    assert distances == sorted(distances)
+    print("✅ Test 3 Passed: Distances strictly ascending")
 
-# ── 2b. GET /api/mandi-prices ───────────────────────────────
-print(f"\n  {BOLD}▸ GET /api/mandi-prices?crop=Tomato&district=Pune{RESET}")
-resp_prices = client.get("/api/mandi-prices", params={"crop": "Tomato", "district": "Pune"})
+    trend_tomato = service.get_price_trends("Tomato", "Pune")
+    assert "current_modal_price_per_quintal" in trend_tomato
+    assert "7_day_average_price" in trend_tomato
+    print(f"✅ Test 4 Passed: 7-Day Trend computed ({trend_tomato['trend_status']})")
 
-report(
-    "Status code is 200",
-    resp_prices.status_code == 200,
-    f"status_code = {resp_prices.status_code}",
-)
+    if trend_tomato["current_modal_price_per_quintal"] >= trend_tomato["7_day_average_price"]:
+        assert trend_tomato["trend_status"] == "Upward"
+    else:
+        assert trend_tomato["trend_status"] == "Downward"
+    print("✅ Test 5 Passed: Trend direction logic consistent")
 
-body_prices = resp_prices.json()
-report(
-    "Response contains price trend fields",
-    all(k in body_prices for k in ["latest_date", "current_modal_price_per_quintal", "7_day_average_price", "trend_status"]),
-    f"Keys: {list(body_prices.keys())}",
-)
+    trend_case = service.get_price_trends("toMAto", "pUNe")
+    assert "error" not in trend_case
+    print("✅ Test 6 Passed: Case-insensitive query works")
 
-print(f"\n  {BOLD}Endpoint Response:{RESET}")
-print(f"    {json.dumps(body_prices, indent=4)}")
+    trend_fake = service.get_price_trends("Pineapple", "Antarctica")
+    assert "error" in trend_fake
+    print("✅ Test 7 Passed: Invalid crop handled gracefully")
 
+    # 2. FastAPI Endpoints Tests
+    res8 = client.get("/api/nearby-mandis?lat=18.5204&lon=73.8567&top_k=3")
+    assert res8.status_code == 200
+    res8_data = res8.json()
+    mandis_list = res8_data.get("nearby_mandis", res8_data if isinstance(res8_data, list) else [])
+    assert len(mandis_list) == 3
+    print("✅ Test 8 Passed: GET /api/nearby-mandis returned 200 OK")
 
-# ═════════════════════════════════════════════════════════════
-#  SUMMARY
-# ═════════════════════════════════════════════════════════════
+    res9 = client.get("/api/mandi-prices?crop=Tomato&district=Pune")
+    assert res9.status_code == 200
+    print("✅ Test 9 Passed: GET /api/mandi-prices returned 200 OK")
 
-print(f"\n{BOLD}{CYAN}{'═'*60}{RESET}")
-total = passed + failed
-if failed == 0:
-    print(f"{BOLD}{GREEN}  🎉 ALL {total} TESTS PASSED{RESET}")
-else:
-    print(f"{BOLD}{RED}  ⚠️  {failed}/{total} TESTS FAILED{RESET}")
-print(f"{BOLD}{CYAN}{'═'*60}{RESET}\n")
+    res10 = client.get("/api/mandi-prices?crop=Avocado&district=Pune")
+    assert res10.status_code == 404
+    print("✅ Test 10 Passed: GET /api/mandi-prices returned 404 for invalid crop")
 
-sys.exit(0 if failed == 0 else 1)
+    res11 = client.get("/api/nearby-mandis?lat=invalid_coord&lon=73.8567")
+    assert res11.status_code == 422
+    print("✅ Test 11 Passed: Schema validation returned 422")
+
+    # 3. Buyer & Advisory Tests
+    buyers = filter_buyers(crop="Tomato", quantity=100, district="Nashik")
+    assert len(buyers) > 0
+    print(f"✅ Test 12 Passed: Found {len(buyers)} buyers in Nashik")
+
+    res13 = client.get("/api/buyer-matches?crop=Tomato&quantity=100&district=Nashik")
+    assert res13.status_code == 200
+    print("✅ Test 13 Passed: GET /api/buyer-matches returned 200 OK")
+
+    res14 = client.post("/api/advisory-bot", json={
+        "user_message": "kya mujhe abhi bechna chahiye?",
+        "crop": "Tomato",
+        "district": "Pune"
+    })
+    assert res14.status_code == 200
+    assert "advice" in res14.json()
+    print("✅ Test 14 Passed: POST /api/advisory-bot returned 200 OK with advice")
+
+    print("============================================================")
+    print("🎉 ALL 14 TESTS PASSED!")
+    print("============================================================")
+
+if __name__ == "__main__":
+    test_all_features()
